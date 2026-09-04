@@ -1540,30 +1540,22 @@ export class SuperLoraNode {
     const overlay = document.createElement('div');
     overlay.style.cssText = `position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 2147483600; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(2px);`;
     const panel = document.createElement('div');
-    panel.style.cssText = `width: 320px; background: #222; border: 1px solid #444; border-radius: 8px; color: #fff; font-family: 'Segoe UI', Arial, sans-serif; box-shadow: 0 12px 30px rgba(0,0,0,0.4); overflow: hidden;`;
+    panel.style.cssText = `box-sizing: border-box; width: 360px; background: #222; border: 1px solid #444; border-radius: 8px; color: #fff; font-family: 'Segoe UI', Arial, sans-serif; box-shadow: 0 12px 30px rgba(0,0,0,0.4); overflow: hidden;`;
     const header = document.createElement('div');
     header.textContent = 'Strength settings';
     header.style.cssText = `padding: 12px 14px; font-weight: 600; border-bottom: 1px solid #444; background: #2a2a2a;`;
 
     const body = document.createElement('div');
-    body.style.cssText = `display: flex; flex-direction: column; gap: 10px; padding: 14px;`;
+    body.style.cssText = `box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; padding: 14px;`;
 
-    const fieldStyle = `flex: 1; min-width: 0; padding: 8px 10px; border-radius: 6px; border: 1px solid #555; background: #1a1a1a; color: #fff; outline: none; font-size: 12px;`;
+    // `width: 100%` (not `flex: 1`) is what actually matters here: these fields
+    // sit inside a `<label>` that's the flex item, not the input itself, and a
+    // bare number input's intrinsic width (UA default ~size=20) is wide enough to
+    // spill into the next field without an explicit width + border-box.
+    const fieldStyle = `box-sizing: border-box; display: block; width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #555; background: #1a1a1a; color: #fff; outline: none; font-size: 12px;`;
     const labelStyle = `font-size: 11px; color: #aaa; margin-bottom: 4px; display: block;`;
 
-    const makeField = (labelText: string, value: number, stepAttr: string): HTMLInputElement => {
-      const wrap = document.createElement('label');
-      wrap.style.cssText = `flex: 1; min-width: 0;`;
-      const lab = document.createElement('span'); lab.textContent = labelText; lab.style.cssText = labelStyle;
-      const inp = document.createElement('input');
-      inp.type = 'number'; inp.step = stepAttr; inp.value = String(value);
-      inp.style.cssText = fieldStyle;
-      wrap.appendChild(lab); wrap.appendChild(inp);
-      body.appendChild(wrap);
-      return inp;
-    };
-
-    const valueRow = document.createElement('div'); valueRow.style.cssText = `display: flex; gap: 8px;`;
+    const valueRow = document.createElement('div'); valueRow.style.cssText = `display: flex; gap: 10px;`;
     body.appendChild(valueRow);
     const modelLabel = document.createElement('label'); modelLabel.style.cssText = 'flex:1; min-width:0;';
     modelLabel.innerHTML = `<span style="${labelStyle}">Model strength</span>`;
@@ -1585,7 +1577,7 @@ export class SuperLoraNode {
       valueRow.appendChild(clipLabel);
     }
 
-    const rangeRow = document.createElement('div'); rangeRow.style.cssText = `display: flex; gap: 8px;`;
+    const rangeRow = document.createElement('div'); rangeRow.style.cssText = `display: flex; gap: 10px;`;
     body.appendChild(rangeRow);
     const minInput = document.createElement('input'); minInput.type = 'number'; minInput.step = '0.01'; minInput.value = String(min); minInput.style.cssText = fieldStyle;
     const maxInput = document.createElement('input'); maxInput.type = 'number'; maxInput.step = '0.01'; maxInput.value = String(max); maxInput.style.cssText = fieldStyle;

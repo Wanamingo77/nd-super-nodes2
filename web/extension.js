@@ -2517,10 +2517,13 @@ class SuperLoraWidget extends SuperLoraBaseWidget {
     const sliderHeight = 20;
     const gearSize = 16;
     const removeSize = 20;
-    const gapSmall = 2;
     const gap = 8;
     const rightEdge = node.size[0] - margin;
     let cursorX = rightEdge;
+    const placeRTL = (width) => {
+      cursorX -= width;
+      return cursorX;
+    };
     let removeX = -9999;
     let gearX = -9999;
     let strengthX = -9999;
@@ -2528,20 +2531,16 @@ class SuperLoraWidget extends SuperLoraBaseWidget {
     let upX = -9999;
     let downX = -9999;
     if (showRemove) {
-      cursorX -= removeSize;
-      removeX = cursorX - gap;
+      removeX = placeRTL(removeSize);
       cursorX -= gap;
     }
     if (showStrength) {
-      cursorX -= gearSize;
-      gearX = cursorX - gap;
-      cursorX -= gapSmall;
-      cursorX -= sliderWidth;
-      strengthX = cursorX - gapSmall;
+      gearX = placeRTL(gearSize);
+      cursorX -= gap;
+      strengthX = placeRTL(sliderWidth);
       cursorX -= gap;
       if (node?.properties?.showSeparateStrengths) {
-        cursorX -= sliderWidth;
-        strengthClipX = cursorX - gap;
+        strengthClipX = placeRTL(sliderWidth);
         cursorX -= gap;
       }
     }
@@ -2828,33 +2827,27 @@ class SuperLoraWidget extends SuperLoraBaseWidget {
     ctx.strokeStyle = "rgba(255,255,255,0.14)";
     ctx.lineWidth = 1;
     ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
-    const label = key === "strength" ? "Model" : "CLIP";
     const dec = 2;
     let text = value.toFixed(dec);
     if (/^-0(\.0+)?$/.test(text)) text = text.slice(1);
-    ctx.font = "10px 'Segoe UI', Arial, sans-serif";
+    ctx.font = "11px 'Segoe UI', Arial, sans-serif";
     ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
     const midY = y + height / 2 + 0.5;
-    const padX = 7;
+    const midX = x + width / 2;
     ctx.save();
     ctx.beginPath();
     ctx.rect(x + fillW, y, Math.max(0, width - fillW), height);
     ctx.clip();
     ctx.fillStyle = this.value.enabled ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.35)";
-    ctx.textAlign = "left";
-    ctx.fillText(label, x + padX, midY);
-    ctx.textAlign = "right";
-    ctx.fillText(text, x + width - padX, midY);
+    ctx.fillText(text, midX, midY);
     ctx.restore();
     ctx.save();
     ctx.beginPath();
     ctx.rect(x, y, fillW, height);
     ctx.clip();
     ctx.fillStyle = "#fff";
-    ctx.textAlign = "left";
-    ctx.fillText(label, x + padX, midY);
-    ctx.textAlign = "right";
-    ctx.fillText(text, x + width - padX, midY);
+    ctx.fillText(text, midX, midY);
     ctx.restore();
     ctx.restore();
   }
@@ -4526,16 +4519,16 @@ const _SuperLoraNode = class _SuperLoraNode {
     const overlay = document.createElement("div");
     overlay.style.cssText = `position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 2147483600; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(2px);`;
     const panel = document.createElement("div");
-    panel.style.cssText = `width: 320px; background: #222; border: 1px solid #444; border-radius: 8px; color: #fff; font-family: 'Segoe UI', Arial, sans-serif; box-shadow: 0 12px 30px rgba(0,0,0,0.4); overflow: hidden;`;
+    panel.style.cssText = `box-sizing: border-box; width: 360px; background: #222; border: 1px solid #444; border-radius: 8px; color: #fff; font-family: 'Segoe UI', Arial, sans-serif; box-shadow: 0 12px 30px rgba(0,0,0,0.4); overflow: hidden;`;
     const header = document.createElement("div");
     header.textContent = "Strength settings";
     header.style.cssText = `padding: 12px 14px; font-weight: 600; border-bottom: 1px solid #444; background: #2a2a2a;`;
     const body = document.createElement("div");
-    body.style.cssText = `display: flex; flex-direction: column; gap: 10px; padding: 14px;`;
-    const fieldStyle = `flex: 1; min-width: 0; padding: 8px 10px; border-radius: 6px; border: 1px solid #555; background: #1a1a1a; color: #fff; outline: none; font-size: 12px;`;
+    body.style.cssText = `box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; padding: 14px;`;
+    const fieldStyle = `box-sizing: border-box; display: block; width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #555; background: #1a1a1a; color: #fff; outline: none; font-size: 12px;`;
     const labelStyle = `font-size: 11px; color: #aaa; margin-bottom: 4px; display: block;`;
     const valueRow = document.createElement("div");
-    valueRow.style.cssText = `display: flex; gap: 8px;`;
+    valueRow.style.cssText = `display: flex; gap: 10px;`;
     body.appendChild(valueRow);
     const modelLabel = document.createElement("label");
     modelLabel.style.cssText = "flex:1; min-width:0;";
@@ -4561,7 +4554,7 @@ const _SuperLoraNode = class _SuperLoraNode {
       valueRow.appendChild(clipLabel);
     }
     const rangeRow = document.createElement("div");
-    rangeRow.style.cssText = `display: flex; gap: 8px;`;
+    rangeRow.style.cssText = `display: flex; gap: 10px;`;
     body.appendChild(rangeRow);
     const minInput = document.createElement("input");
     minInput.type = "number";

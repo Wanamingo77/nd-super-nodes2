@@ -17,7 +17,11 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "NdSuperLoraLoader": "ND Super LoRA Loader",
+    # Display name only (the registry key above is unchanged) - kept distinct from
+    # the upstream "ND Super LoRA Loader" so the two are never mistaken for each
+    # other in the node search or on the canvas. Existing saved workflows are
+    # unaffected: ComfyUI matches nodes by the registry key, not this label.
+    "NdSuperLoraLoader": "ND Super LoRA Loader (Revisited)",
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

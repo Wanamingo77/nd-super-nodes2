@@ -141,6 +141,15 @@ export class SuperLoraWidget extends SuperLoraBaseWidget {
 
     const rightEdge = node.size[0] - margin;
     let cursorX = rightEdge;
+    // Places an element of `width` immediately to the left of the current cursor,
+    // returns its left edge, and leaves the cursor there - so the NEXT element
+    // placed this way starts exactly where this one ends (no overlap by
+    // construction). Callers add their own gap between elements explicitly.
+    const placeRTL = (width: number): number => {
+      cursorX -= width;
+      return cursorX;
+    };
+
     let removeX = -9999;
     let gearX = -9999;
     let strengthX = -9999;
@@ -149,16 +158,20 @@ export class SuperLoraWidget extends SuperLoraBaseWidget {
     let downX = -9999;
 
     if (showRemove) {
-      cursorX -= removeSize; removeX = cursorX - gap; cursorX -= gap;
+      removeX = placeRTL(removeSize);
+      cursorX -= gap;
     }
     if (showStrength) {
       // One shared gear icon opens the range/exact-value settings for both sliders.
-      cursorX -= gearSize; gearX = cursorX - gap; cursorX -= gapSmall;
+      gearX = placeRTL(gearSize);
+      cursorX -= gap;
       // Model strength slider (rightmost)
-      cursorX -= sliderWidth; strengthX = cursorX - gapSmall; cursorX -= gap;
+      strengthX = placeRTL(sliderWidth);
+      cursorX -= gap;
       // Optional CLIP strength slider (to the left) when separate strengths enabled
       if (node?.properties?.showSeparateStrengths) {
-        cursorX -= sliderWidth; strengthClipX = cursorX - gap; cursorX -= gap;
+        strengthClipX = placeRTL(sliderWidth);
+        cursorX -= gap;
       }
     }
     if (showMoveArrows) {
@@ -462,26 +475,24 @@ export class SuperLoraWidget extends SuperLoraBaseWidget {
     ctx.lineWidth = 1;
     ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
 
-    // Label + value, drawn twice with opposite clips so the text stays legible
-    // regardless of where the fill edge lands (mirrors the reference slider look).
-    const label = key === 'strength' ? 'Model' : 'CLIP';
+    // Value only (no "Model"/"CLIP" label - the row already has other cues for
+    // which slider is which), centered and drawn twice with opposite clips so it
+    // stays legible regardless of where the fill edge lands.
     const dec = 2;
     let text = value.toFixed(dec);
     if (/^-0(\.0+)?$/.test(text)) text = text.slice(1);
-    ctx.font = "10px 'Segoe UI', Arial, sans-serif";
+    ctx.font = "11px 'Segoe UI', Arial, sans-serif";
     ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
     const midY = y + height / 2 + 0.5;
-    const padX = 7;
+    const midX = x + width / 2;
 
     ctx.save();
     ctx.beginPath();
     ctx.rect(x + fillW, y, Math.max(0, width - fillW), height);
     ctx.clip();
     ctx.fillStyle = this.value.enabled ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.35)";
-    ctx.textAlign = "left";
-    ctx.fillText(label, x + padX, midY);
-    ctx.textAlign = "right";
-    ctx.fillText(text, x + width - padX, midY);
+    ctx.fillText(text, midX, midY);
     ctx.restore();
 
     ctx.save();
@@ -489,10 +500,7 @@ export class SuperLoraWidget extends SuperLoraBaseWidget {
     ctx.rect(x, y, fillW, height);
     ctx.clip();
     ctx.fillStyle = "#fff";
-    ctx.textAlign = "left";
-    ctx.fillText(label, x + padX, midY);
-    ctx.textAlign = "right";
-    ctx.fillText(text, x + width - padX, midY);
+    ctx.fillText(text, midX, midY);
     ctx.restore();
 
     ctx.restore();
