@@ -2518,7 +2518,7 @@ class SuperLoraWidget extends SuperLoraBaseWidget {
     const gearSize = 16;
     const removeSize = 20;
     const gap = 8;
-    const rightEdge = node.size[0] - margin;
+    const rightEdge = node.size[0] - margin - 6;
     let cursorX = rightEdge;
     const placeRTL = (width) => {
       cursorX -= width;

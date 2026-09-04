@@ -139,7 +139,10 @@ export class SuperLoraWidget extends SuperLoraBaseWidget {
     const gapSmall = 2;
     const gap = 8;
 
-    const rightEdge = node.size[0] - margin;
+    // Mirrors the left side's `margin + 6` starting inset (see posX above) so the
+    // remove button sits as far from the node's right edge as the drag handle
+    // sits from the left, instead of landing flush against the row's clip edge.
+    const rightEdge = node.size[0] - margin - 6;
     let cursorX = rightEdge;
     // Places an element of `width` immediately to the left of the current cursor,
     // returns its left edge, and leaves the cursor there - so the NEXT element
