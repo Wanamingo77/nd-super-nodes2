@@ -3312,6 +3312,7 @@ const _SuperLoraNode = class _SuperLoraNode {
         });
       } catch {
       }
+      _SuperLoraNode.ensureVueBridgeWidget(this);
     };
     const originalOnDrawForeground = nodeType.prototype.onDrawForeground;
     nodeType.prototype.onDrawForeground = function(ctx) {
@@ -3396,6 +3397,7 @@ const _SuperLoraNode = class _SuperLoraNode {
         });
       } catch {
       }
+      _SuperLoraNode.ensureVueBridgeWidget(this);
       _SuperLoraNode.syncExecutionWidgets(this);
     };
     const originalGetExtraMenuOptions = nodeType.prototype.getExtraMenuOptions;
@@ -3458,9 +3460,9 @@ const _SuperLoraNode = class _SuperLoraNode {
     node.size = [node.size[0], Math.max(node.size[1], contentHeight)];
     console.log("Super LoRA Loader: Advanced node setup complete");
   }
-  static computeContentHeight(node) {
+  static computeContentHeight(node, startY = _SuperLoraNode.NODE_WIDGET_TOP_OFFSET) {
     const marginDefault = _SuperLoraNode.MARGIN_SMALL;
-    let currentY = this.NODE_WIDGET_TOP_OFFSET;
+    let currentY = startY;
     if (!node?.customWidgets) {
       return Math.max(currentY, 100);
     }
@@ -3500,30 +3502,9 @@ const _SuperLoraNode = class _SuperLoraNode {
   static drawCustomWidgets(node, ctx) {
     if (!node.customWidgets) return;
     const isBypassed = _SuperLoraNode.isNodeBypassed(node);
-    const marginDefault = _SuperLoraNode.MARGIN_SMALL;
-    let currentY = this.NODE_WIDGET_TOP_OFFSET;
     if (!isBypassed) {
-      const renderable = [];
-      for (const widget of node.customWidgets) {
-        const size = widget.computeSize();
-        const isCollapsed = widget instanceof SuperLoraWidget && widget.isCollapsedByTag(node);
-        const height = widget instanceof SuperLoraWidget ? 34 : size[1];
-        if (height === 0 || isCollapsed) continue;
-        renderable.push(widget);
-      }
-      renderable.forEach((widget, index) => {
-        const size = widget.computeSize();
-        const height = widget instanceof SuperLoraWidget ? 34 : size[1];
-        widget.draw(ctx, node, node.size[0], currentY, height);
-        let marginAfter = widget instanceof SuperLoraTagWidget && widget.isCollapsed() ? 0 : marginDefault;
-        const isLast = index === renderable.length - 1;
-        if (isLast && widget instanceof SuperLoraTagWidget && widget.isCollapsed()) {
-          marginAfter = Math.max(marginDefault, 8);
-        }
-        currentY += height + marginAfter;
-      });
-    }
-    if (isBypassed) {
+      _SuperLoraNode.drawWidgetStack(node, ctx, this.NODE_WIDGET_TOP_OFFSET, node.size[0]);
+    } else {
       try {
         ctx.save();
         ctx.globalCompositeOperation = "source-over";
@@ -3542,6 +3523,96 @@ const _SuperLoraNode = class _SuperLoraNode {
     }
   }
   /**
+   * Draws the stacked custom-widget UI starting at a given Y offset, using a given
+   * width. Shared by the classic onDrawForeground path (startY = NODE_WIDGET_TOP_OFFSET,
+   * full-node ctx) and the Nodes 2.0 bridge widget (startY = 0, isolated per-widget ctx).
+   */
+  static drawWidgetStack(node, ctx, startY, width) {
+    if (!node.customWidgets) return;
+    const marginDefault = _SuperLoraNode.MARGIN_SMALL;
+    let currentY = startY;
+    const renderable = [];
+    for (const widget of node.customWidgets) {
+      const size = widget.computeSize();
+      const isCollapsed = widget instanceof SuperLoraWidget && widget.isCollapsedByTag(node);
+      const height = widget instanceof SuperLoraWidget ? 34 : size[1];
+      if (height === 0 || isCollapsed) continue;
+      renderable.push(widget);
+    }
+    renderable.forEach((widget, index) => {
+      const size = widget.computeSize();
+      const height = widget instanceof SuperLoraWidget ? 34 : size[1];
+      widget.draw(ctx, node, width, currentY, height);
+      let marginAfter = widget instanceof SuperLoraTagWidget && widget.isCollapsed() ? 0 : marginDefault;
+      const isLast = index === renderable.length - 1;
+      if (isLast && widget instanceof SuperLoraTagWidget && widget.isCollapsed()) {
+        marginAfter = Math.max(marginDefault, 8);
+      }
+      currentY += height + marginAfter;
+    });
+  }
+  /**
+   * Registers a real LiteGraph widget so ComfyUI's "Nodes 2.0" (Vue/DOM) renderer
+   * can display and interact with this node's canvas-drawn UI.
+   *
+   * Classic canvas rendering already works via onDrawForeground/onMouseDown/onMouseUp
+   * (see setup() below) and must stay untouched. Nodes 2.0 replaces per-node canvas
+   * drawing entirely (LGraphCanvas.drawNode() returns early when LiteGraph.vueNodesMode
+   * is true) and instead renders whatever is in node.widgets. A widget exposing a
+   * `.draw()` function is picked up by ComfyUI's built-in "legacy widget" fallback
+   * (WidgetLegacy.vue), which mounts an isolated per-widget canvas and forwards
+   * pointer events to `widget.mouse(event, pos, node)`.
+   *
+   * The widget's draw/mouse/computeSize all gate on LiteGraph.vueNodesMode so that in
+   * classic mode they are effectively inert (zero size, no draw, no hit-test) even
+   * though the widget is technically present in node.widgets - avoiding any double
+   * rendering or double hit-testing there.
+   */
+  static ensureVueBridgeWidget(node) {
+    try {
+      if (!node.widgets) node.widgets = [];
+      if (node.widgets.some((w) => w?.name === _SuperLoraNode.VUE_BRIDGE_WIDGET_NAME)) return;
+      const bridgeWidget = {
+        type: "custom",
+        name: _SuperLoraNode.VUE_BRIDGE_WIDGET_NAME,
+        value: void 0,
+        // Excluded from workflow widgets_values - this node's real data lives in
+        // node.customWidgets and is serialized separately (see serialize() override).
+        serialize: false,
+        options: {},
+        computeSize(width) {
+          if (!LiteGraph?.vueNodesMode) return [0, 0];
+          const w = typeof width === "number" && width > 0 ? width : node.size?.[0] || 200;
+          return [w, _SuperLoraNode.computeContentHeight(node, 0)];
+        },
+        draw(ctx, n, widgetWidth) {
+          if (!LiteGraph?.vueNodesMode) return;
+          if (_SuperLoraNode.isNodeBypassed(n)) return;
+          _SuperLoraNode.drawWidgetStack(n, ctx, 0, widgetWidth || n.size[0]);
+        },
+        mouse(event, pos, n) {
+          if (!LiteGraph?.vueNodesMode) return false;
+          if (_SuperLoraNode.isNodeBypassed(n)) return true;
+          const type = event?.type;
+          if (type === "pointerdown" || type === "mousedown") {
+            return _SuperLoraNode.handleMouseEvent(n, event, pos, "onMouseDown", 0);
+          }
+          if (type === "pointerup" || type === "mouseup" || type === "click") {
+            return _SuperLoraNode.handleMouseEvent(n, event, pos, "onClick", 0);
+          }
+          return false;
+        }
+      };
+      if (typeof node.addCustomWidget === "function") {
+        node.addCustomWidget(bridgeWidget);
+      } else {
+        node.widgets.push(bridgeWidget);
+      }
+    } catch (err) {
+      console.warn("Super LoRA Loader: Failed to register Nodes 2.0 bridge widget", err);
+    }
+  }
+  /**
    * Handle mouse interactions
    */
   static handleMouseDown(node, event, pos) {
@@ -3550,7 +3621,7 @@ const _SuperLoraNode = class _SuperLoraNode {
   static handleMouseUp(node, event, pos) {
     return this.handleMouseEvent(node, event, pos, "onClick");
   }
-  static handleMouseEvent(node, event, pos, handler) {
+  static handleMouseEvent(node, event, pos, handler, startY = _SuperLoraNode.NODE_WIDGET_TOP_OFFSET) {
     if (!node.customWidgets) return false;
     if (_SuperLoraNode.isNodeBypassed(node)) {
       return true;
@@ -3570,7 +3641,7 @@ const _SuperLoraNode = class _SuperLoraNode {
     } catch {
     }
     const marginDefault = _SuperLoraNode.MARGIN_SMALL;
-    let currentY = this.NODE_WIDGET_TOP_OFFSET;
+    let currentY = startY;
     for (const widget of node.customWidgets) {
       const size = widget.computeSize();
       const isCollapsed = widget instanceof SuperLoraWidget && widget.isCollapsedByTag(node);
@@ -4350,6 +4421,7 @@ const _SuperLoraNode = class _SuperLoraNode {
 };
 _SuperLoraNode.NODE_WIDGET_TOP_OFFSET = 68;
 _SuperLoraNode.MARGIN_SMALL = 2;
+_SuperLoraNode.VUE_BRIDGE_WIDGET_NAME = "__super_lora_vue_bridge__";
 _SuperLoraNode.loraService = LoraService.getInstance();
 _SuperLoraNode.templateService = TemplateService.getInstance();
 _SuperLoraNode.initialized = false;
