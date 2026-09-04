@@ -202,9 +202,16 @@ export class SuperLoraNode {
           // Create once (real widget so ComfyUI serializes it reliably)
           bridge = this.addWidget('text', 'lora_bundle', freshBundle, () => {}, {});
         }
-        // Make it effectively invisible and non-interactive while still serializable
+        // Make it effectively invisible and non-interactive while still serializable.
+        // `hidden` and `options.hidden` are set independently (not just `hidden`) because
+        // ComfyUI's classic canvas visibility check reads the former while its Nodes 2.0
+        // (Vue) widget list reads the latter - on some frontend versions the two are not
+        // kept in sync automatically, which otherwise leaves this widget visible (showing
+        // its raw JSON value) under Nodes 2.0 even though it is correctly hidden classically.
         bridge.type = 'text';
         bridge.hidden = true;
+        bridge.options = bridge.options || {};
+        bridge.options.hidden = true;
         bridge.draw = () => {};
         bridge.computeSize = () => [0, 0];
         bridge.value = freshBundle;
@@ -464,15 +471,22 @@ export class SuperLoraNode {
           if (SuperLoraNode.isNodeBypassed(n)) return;
           SuperLoraNode.drawWidgetStack(n, ctx, 0, widgetWidth || n.size[0]);
         },
+        // Dispatch only on pointer-up. ComfyUI forwards pointerdown/pointerup to this
+        // callback in TWO DIFFERENT coordinate spaces (pointerdown pos is local to this
+        // widget's isolated mini-canvas; pointerup pos is relative to the whole node, via
+        // LGraphCanvas.processWidgetClick), so they aren't interchangeable. More importantly,
+        // every hit area in this widget system defines EITHER an onMouseDown OR an onClick
+        // handler (never both) and SuperLoraBaseWidget.handleHitAreas() falls back to
+        // whichever is defined regardless of which one is requested - so dispatching both
+        // down and up made every action fire twice per click (e.g. deleting two LoRA rows
+        // for one trash-icon click). A single dispatch on click resolves correctly via that
+        // fallback and fires each action exactly once.
         mouse(event: any, pos: any, n: any): boolean {
           if (!LiteGraph?.vueNodesMode) return false;
           if (SuperLoraNode.isNodeBypassed(n)) return true;
           const type = event?.type;
-          if (type === 'pointerdown' || type === 'mousedown') {
-            return SuperLoraNode.handleMouseEvent(n, event, pos, 'onMouseDown', 0);
-          }
           if (type === 'pointerup' || type === 'mouseup' || type === 'click') {
-            return SuperLoraNode.handleMouseEvent(n, event, pos, 'onClick', 0);
+            return SuperLoraNode.handleMouseEvent(n, event, pos, 'onClick');
           }
           return false;
         }
@@ -482,6 +496,26 @@ export class SuperLoraNode {
         node.addCustomWidget(bridgeWidget);
       } else {
         node.widgets.push(bridgeWidget);
+      }
+
+      // WidgetLegacy.vue only redraws this widget's isolated mini-canvas on mount/resize/
+      // palette change - it has no reactive hook into node.customWidgets changing. Piggyback
+      // on setDirtyCanvas (already called after every add/remove/toggle) to force a redraw via
+      // the `triggerDraw` hook Vue attaches to the widget once mounted. A second redraw on the
+      // next frame is needed because the container's height (driven by our computeSize) only
+      // takes effect in the DOM after Vue's reactive update flushes, one tick after the first draw.
+      if (!node.__ndSuperLoraVueRedrawPatched) {
+        node.__ndSuperLoraVueRedrawPatched = true;
+        const originalSetDirtyCanvas = node.setDirtyCanvas ? node.setDirtyCanvas.bind(node) : null;
+        node.setDirtyCanvas = function (fg?: boolean, bg?: boolean) {
+          originalSetDirtyCanvas?.(fg, bg);
+          if (!LiteGraph?.vueNodesMode) return;
+          const bridge = node.widgets?.find((w: any) => w?.name === SuperLoraNode.VUE_BRIDGE_WIDGET_NAME);
+          bridge?.triggerDraw?.();
+          if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => bridge?.triggerDraw?.());
+          }
+        };
       }
     } catch (err) {
       console.warn('Super LoRA Loader: Failed to register Nodes 2.0 bridge widget', err);

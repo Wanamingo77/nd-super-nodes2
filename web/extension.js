@@ -3368,6 +3368,8 @@ const _SuperLoraNode = class _SuperLoraNode {
         }
         bridge.type = "text";
         bridge.hidden = true;
+        bridge.options = bridge.options || {};
+        bridge.options.hidden = true;
         bridge.draw = () => {
         };
         bridge.computeSize = () => [0, 0];
@@ -3590,15 +3592,22 @@ const _SuperLoraNode = class _SuperLoraNode {
           if (_SuperLoraNode.isNodeBypassed(n)) return;
           _SuperLoraNode.drawWidgetStack(n, ctx, 0, widgetWidth || n.size[0]);
         },
+        // Dispatch only on pointer-up. ComfyUI forwards pointerdown/pointerup to this
+        // callback in TWO DIFFERENT coordinate spaces (pointerdown pos is local to this
+        // widget's isolated mini-canvas; pointerup pos is relative to the whole node, via
+        // LGraphCanvas.processWidgetClick), so they aren't interchangeable. More importantly,
+        // every hit area in this widget system defines EITHER an onMouseDown OR an onClick
+        // handler (never both) and SuperLoraBaseWidget.handleHitAreas() falls back to
+        // whichever is defined regardless of which one is requested - so dispatching both
+        // down and up made every action fire twice per click (e.g. deleting two LoRA rows
+        // for one trash-icon click). A single dispatch on click resolves correctly via that
+        // fallback and fires each action exactly once.
         mouse(event, pos, n) {
           if (!LiteGraph?.vueNodesMode) return false;
           if (_SuperLoraNode.isNodeBypassed(n)) return true;
           const type = event?.type;
-          if (type === "pointerdown" || type === "mousedown") {
-            return _SuperLoraNode.handleMouseEvent(n, event, pos, "onMouseDown", 0);
-          }
           if (type === "pointerup" || type === "mouseup" || type === "click") {
-            return _SuperLoraNode.handleMouseEvent(n, event, pos, "onClick", 0);
+            return _SuperLoraNode.handleMouseEvent(n, event, pos, "onClick");
           }
           return false;
         }
@@ -3607,6 +3616,19 @@ const _SuperLoraNode = class _SuperLoraNode {
         node.addCustomWidget(bridgeWidget);
       } else {
         node.widgets.push(bridgeWidget);
+      }
+      if (!node.__ndSuperLoraVueRedrawPatched) {
+        node.__ndSuperLoraVueRedrawPatched = true;
+        const originalSetDirtyCanvas = node.setDirtyCanvas ? node.setDirtyCanvas.bind(node) : null;
+        node.setDirtyCanvas = function(fg, bg) {
+          originalSetDirtyCanvas?.(fg, bg);
+          if (!LiteGraph?.vueNodesMode) return;
+          const bridge = node.widgets?.find((w) => w?.name === _SuperLoraNode.VUE_BRIDGE_WIDGET_NAME);
+          bridge?.triggerDraw?.();
+          if (typeof requestAnimationFrame === "function") {
+            requestAnimationFrame(() => bridge?.triggerDraw?.());
+          }
+        };
       }
     } catch (err) {
       console.warn("Super LoRA Loader: Failed to register Nodes 2.0 bridge widget", err);
