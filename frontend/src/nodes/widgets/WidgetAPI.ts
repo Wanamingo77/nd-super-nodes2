@@ -11,6 +11,7 @@ export type WidgetAPIType = {
   showLoadTemplateDialog: (node: any, event?: any) => void | Promise<void>;
   showNameOverlay: (opts: { title: string; placeholder: string; initial?: string; submitLabel?: string; onCommit: (name: string) => void }) => void;
   showInlineText: (event: any, initial: string, onCommit: (v: string) => void, place?: { rect: { x: number; y: number; w: number; h: number }; node: any }) => void;
+  showStrengthSettings: (node: any, widget: any, event?: any) => void;
   showToast: (message: string, type?: 'success' | 'warning' | 'error' | 'info') => void;
 
   // Node structure helpers
@@ -34,6 +35,7 @@ export const WidgetAPI: WidgetAPIType = {
   showLoadTemplateDialog: () => { throw new Error('WidgetAPI.showLoadTemplateDialog not initialized'); },
   showNameOverlay: () => { throw new Error('WidgetAPI.showNameOverlay not initialized'); },
   showInlineText: () => { throw new Error('WidgetAPI.showInlineText not initialized'); },
+  showStrengthSettings: () => { throw new Error('WidgetAPI.showStrengthSettings not initialized'); },
   showToast: () => { throw new Error('WidgetAPI.showToast not initialized'); },
   calculateNodeSize: () => { throw new Error('WidgetAPI.calculateNodeSize not initialized'); },
   organizeByTags: () => { throw new Error('WidgetAPI.organizeByTags not initialized'); },

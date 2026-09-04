@@ -20,12 +20,7 @@ export class SuperLoraWidget extends SuperLoraBaseWidget {
       enabled: { bounds: [0, 0], onDown: this.onEnabledDown, priority: 60 },
       lora: { bounds: [0, 0], onClick: this.onLoraClick, priority: 10 },
       tag: { bounds: [0, 0], onClick: this.onTagClick, priority: 20 },
-      strength: { bounds: [0, 0], onClick: this.onStrengthClick, priority: 80 },
-      strengthDown: { bounds: [0, 0], onClick: this.onStrengthDownClick, priority: 90 },
-      strengthUp: { bounds: [0, 0], onClick: this.onStrengthUpClick, priority: 90 },
-      strengthClip: { bounds: [0, 0], onClick: this.onStrengthClipClick, priority: 80 },
-      strengthClipDown: { bounds: [0, 0], onClick: this.onStrengthClipDownClick, priority: 90 },
-      strengthClipUp: { bounds: [0, 0], onClick: this.onStrengthClipUpClick, priority: 90 },
+      strengthSettings: { bounds: [0, 0], onClick: this.onStrengthSettingsClick, priority: 90 },
       triggerWords: { bounds: [0, 0], onClick: this.onTriggerWordsClick, priority: 85 },
       refresh: { bounds: [0, 0], onClick: this.onRefreshClick, priority: 95 },
       remove: { bounds: [0, 0], onClick: this.onRemoveClick, priority: 100 },
@@ -33,6 +28,13 @@ export class SuperLoraWidget extends SuperLoraBaseWidget {
       moveDown: { bounds: [0, 0], onClick: this.onMoveDownClick, priority: 70 }
     };
   }
+
+  // Bounds for the drag-and-drop handle and the strength slider tracks. These are
+  // hit-tested separately from `hitAreas` (see SuperLoraNode.tryStartDrag/handleDragMove)
+  // because they need continuous pointer-move tracking, not a single onDown/onClick.
+  private _dragHandleBounds: number[] = [0, 0, 0, 0];
+  private _strengthSliderBounds: number[] = [0, 0, 0, 0];
+  private _strengthClipSliderBounds: number[] = [0, 0, 0, 0];
 
   draw(ctx: any, node: any, w: number, posY: number, height: number): void {
     const margin = 8;
@@ -80,6 +82,30 @@ export class SuperLoraWidget extends SuperLoraBaseWidget {
     let posX = margin + 6;
     const midY = rowHeight / 2;
 
+    // Drag-and-drop handle (grip). Press and hold, then drag up/down to reorder -
+    // the move up/down arrows still work too, this is just an alternative.
+    const handleW = 14;
+    {
+      const hx = posX;
+      const hy = posY;
+      ctx.save();
+      ctx.globalAlpha *= this.value.enabled ? 0.6 : 0.35;
+      ctx.fillStyle = '#aaa';
+      const dotR = 1.4;
+      const colX = [hx + 4, hx + 9];
+      const rowsY = [hy + midY - 6, hy + midY, hy + midY + 6];
+      for (const cx of colX) {
+        for (const cy of rowsY) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+      this._dragHandleBounds = [hx, 0, handleW, fullHeight];
+      posX += handleW + 6;
+    }
+
     const toggleSize = 20;
     const toggleY = (rowHeight - toggleSize) / 2;
     ctx.fillStyle = "#2a2a2a";
@@ -106,8 +132,9 @@ export class SuperLoraWidget extends SuperLoraBaseWidget {
     const showRemove = node?.properties?.showRemoveButton !== false;
 
     const arrowSize = 20;
-    const strengthWidth = 50;
-    const btnSize = 20;
+    const sliderWidth = 96;
+    const sliderHeight = 20;
+    const gearSize = 16;
     const removeSize = 20;
     const gapSmall = 2;
     const gap = 8;
@@ -115,11 +142,8 @@ export class SuperLoraWidget extends SuperLoraBaseWidget {
     const rightEdge = node.size[0] - margin;
     let cursorX = rightEdge;
     let removeX = -9999;
-    let plusX = -9999;
-    let minusX = -9999;
+    let gearX = -9999;
     let strengthX = -9999;
-    let plusClipX = -9999;
-    let minusClipX = -9999;
     let strengthClipX = -9999;
     let upX = -9999;
     let downX = -9999;
@@ -128,22 +152,20 @@ export class SuperLoraWidget extends SuperLoraBaseWidget {
       cursorX -= removeSize; removeX = cursorX - gap; cursorX -= gap;
     }
     if (showStrength) {
-      // Model strength group (rightmost)
-      cursorX -= btnSize; plusX = cursorX - gap; cursorX -= gapSmall;
-      cursorX -= strengthWidth; strengthX = cursorX - gap; cursorX -= gapSmall;
-      cursorX -= btnSize; minusX = cursorX - gap; cursorX -= gap;
-      // Optional CLIP strength group (to the left) when separate strengths enabled
+      // One shared gear icon opens the range/exact-value settings for both sliders.
+      cursorX -= gearSize; gearX = cursorX - gap; cursorX -= gapSmall;
+      // Model strength slider (rightmost)
+      cursorX -= sliderWidth; strengthX = cursorX - gapSmall; cursorX -= gap;
+      // Optional CLIP strength slider (to the left) when separate strengths enabled
       if (node?.properties?.showSeparateStrengths) {
-        cursorX -= btnSize; plusClipX = cursorX - gap; cursorX -= gapSmall;
-        cursorX -= strengthWidth; strengthClipX = cursorX - gap; cursorX -= gapSmall;
-        cursorX -= btnSize; minusClipX = cursorX - gap; cursorX -= gap;
+        cursorX -= sliderWidth; strengthClipX = cursorX - gap; cursorX -= gap;
       }
     }
     if (showMoveArrows) {
-      const leftMostMinus = (showStrength && node?.properties?.showSeparateStrengths)
-        ? Math.min(minusX, minusClipX)
-        : minusX;
-      const arrowRightStart = showStrength ? (leftMostMinus - gap) : (showRemove ? (removeX - gap) : (rightEdge - gap));
+      const leftMostSlider = (showStrength && node?.properties?.showSeparateStrengths)
+        ? Math.min(strengthX, strengthClipX)
+        : strengthX;
+      const arrowRightStart = showStrength ? (leftMostSlider - gap) : (showRemove ? (removeX - gap) : (rightEdge - gap));
       upX = arrowRightStart - arrowSize - 4;
       downX = upX - (arrowSize + 2);
       cursorX -= gap;
@@ -174,16 +196,18 @@ export class SuperLoraWidget extends SuperLoraBaseWidget {
     const loraLeft = posX;
     const rightMost = [
       showMoveArrows ? downX : null,
-      showStrength ? minusX : null,
-      (showStrength && node?.properties?.showSeparateStrengths) ? minusClipX : null,
+      showStrength ? strengthX : null,
+      (showStrength && node?.properties?.showSeparateStrengths) ? strengthClipX : null,
       showRemove ? removeX : null
     ].filter(v => typeof v === 'number') as number[];
     const loraMaxRight = (rightMost.length ? Math.min(...rightMost) : rightEdge) - gap;
     const loraWidth = Math.max(100, loraMaxRight - loraLeft);
 
+    // Trigger words get a short, fixed-ish slot (capped) so the LoRA name and the
+    // (now wider) strength sliders have more room - the full text is still one click away.
     const showTriggers = !!(node.properties && node.properties.showTriggerWords);
-    const nameWidth = showTriggers ? Math.max(80, Math.floor(loraWidth * 0.6)) : loraWidth;
-    const trigWidth = showTriggers ? (loraWidth - nameWidth) : 0;
+    const trigWidth = showTriggers ? Math.max(50, Math.min(80, Math.floor(loraWidth * 0.3))) : 0;
+    const nameWidth = showTriggers ? Math.max(80, loraWidth - trigWidth) : loraWidth;
 
     ctx.textAlign = "left";
     ctx.font = "12px 'Segoe UI', Arial, sans-serif";
@@ -331,75 +355,31 @@ export class SuperLoraWidget extends SuperLoraBaseWidget {
       this.hitAreas.moveDown.bounds = [0, 0, 0, 0];
     }
 
-    const btnY = (rowHeight - btnSize) / 2;
     if (showStrength) {
-      ctx.fillStyle = "#666"; ctx.beginPath();
-      ctx.roundRect(minusX, posY + btnY, btnSize, btnSize, 2);
-      ctx.fill();
-      ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.font = "12px Arial";
-      ctx.fillText("-", minusX + btnSize / 2, posY + midY);
-      this.hitAreas.strengthDown.bounds = [minusX, 0, btnSize, fullHeight];
-    } else {
-      this.hitAreas.strengthDown.bounds = [0,0,0,0];
-    }
+      const sliderY = (rowHeight - sliderHeight) / 2;
+      this.drawStrengthSlider(ctx, node, strengthX, posY + sliderY, sliderWidth, sliderHeight, 'strength', "#8a5cf6");
+      this._strengthSliderBounds = [strengthX, 0, sliderWidth, fullHeight];
 
-    if (node?.properties?.showStrengthControls !== false) {
-      const strengthY = (rowHeight - 20) / 2;
-      // Model strength background: muted purple when enabled, dark neutral when disabled
-      ctx.fillStyle = this.value.enabled ? "#3b2a4a" : "#2a2a2a"; ctx.beginPath();
-      ctx.roundRect(strengthX, posY + strengthY, strengthWidth, 20, 3);
+      if (node?.properties?.showSeparateStrengths) {
+        this.drawStrengthSlider(ctx, node, strengthClipX, posY + sliderY, sliderWidth, sliderHeight, 'strengthClip', "#e0a72e");
+        this._strengthClipSliderBounds = [strengthClipX, 0, sliderWidth, fullHeight];
+      } else {
+        this._strengthClipSliderBounds = [0, 0, 0, 0];
+      }
+
+      // Shared gear: opens exact value + min/max/step for both sliders on this row.
+      const gearY = posY + (rowHeight - gearSize) / 2;
+      ctx.fillStyle = "#3a3a3a"; ctx.beginPath();
+      ctx.roundRect(gearX, gearY, gearSize, gearSize, 3);
       ctx.fill();
       ctx.strokeStyle = "#4a4a4a"; ctx.lineWidth = 1; ctx.stroke();
-      ctx.fillStyle = this.value.enabled ? "#e5e5e5" : "#bdbdbd"; ctx.textAlign = "center"; ctx.font = "12px Arial";
-      ctx.fillText(this.value.strength.toFixed(2), strengthX + strengthWidth / 2, posY + midY);
-      this.hitAreas.strength.bounds = [strengthX, 0, strengthWidth, fullHeight];
+      ctx.fillStyle = "#ccc"; ctx.textAlign = "center"; ctx.font = "10px Arial";
+      ctx.fillText("⚙", gearX + gearSize / 2, posY + midY + 1);
+      this.hitAreas.strengthSettings.bounds = [gearX, 0, gearSize, fullHeight];
     } else {
-      this.hitAreas.strength.bounds = [0,0,0,0];
-    }
-
-    if (node?.properties?.showStrengthControls !== false) {
-      ctx.fillStyle = "#666"; ctx.beginPath();
-      ctx.roundRect(plusX, posY + btnY, btnSize, btnSize, 2);
-      ctx.fill();
-      ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.font = "12px Arial";
-      ctx.fillText("+", plusX + btnSize / 2, posY + midY);
-      this.hitAreas.strengthUp.bounds = [plusX, 0, btnSize, fullHeight];
-    } else {
-      this.hitAreas.strengthUp.bounds = [0,0,0,0];
-    }
-
-    // Draw CLIP strength controls when separate strengths are enabled
-    if (showStrength && node?.properties?.showSeparateStrengths) {
-      // Minus
-      ctx.fillStyle = "#666"; ctx.beginPath();
-      ctx.roundRect(minusClipX, posY + btnY, btnSize, btnSize, 2);
-      ctx.fill();
-      ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.font = "12px Arial";
-      ctx.fillText("-", minusClipX + btnSize / 2, posY + midY);
-      this.hitAreas.strengthClipDown.bounds = [minusClipX, 0, btnSize, fullHeight];
-
-      // Value box
-      const strengthY2 = (rowHeight - 20) / 2;
-      // CLIP strength background: muted yellow/amber when enabled, dark neutral when disabled
-      ctx.fillStyle = this.value.enabled ? "#4a3f1f" : "#2a2a2a"; ctx.beginPath();
-      ctx.roundRect(strengthClipX, posY + strengthY2, strengthWidth, 20, 3);
-      ctx.fill();
-      ctx.strokeStyle = "#4a4a4a"; ctx.lineWidth = 1; ctx.stroke();
-      ctx.fillStyle = this.value.enabled ? "#e5e5e5" : "#bdbdbd"; ctx.textAlign = "center"; ctx.font = "12px Arial";
-      ctx.fillText(this.value.strengthClip.toFixed(2), strengthClipX + strengthWidth / 2, posY + midY);
-      this.hitAreas.strengthClip.bounds = [strengthClipX, 0, strengthWidth, fullHeight];
-
-      // Plus
-      ctx.fillStyle = "#666"; ctx.beginPath();
-      ctx.roundRect(plusClipX, posY + btnY, btnSize, btnSize, 2);
-      ctx.fill();
-      ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.font = "12px Arial";
-      ctx.fillText("+", plusClipX + btnSize / 2, posY + midY);
-      this.hitAreas.strengthClipUp.bounds = [plusClipX, 0, btnSize, fullHeight];
-    } else {
-      this.hitAreas.strengthClipDown.bounds = [0,0,0,0];
-      this.hitAreas.strengthClip.bounds = [0,0,0,0];
-      this.hitAreas.strengthClipUp.bounds = [0,0,0,0];
+      this._strengthSliderBounds = [0, 0, 0, 0];
+      this._strengthClipSliderBounds = [0, 0, 0, 0];
+      this.hitAreas.strengthSettings.bounds = [0, 0, 0, 0];
     }
 
     ctx.restore();
@@ -434,6 +414,114 @@ export class SuperLoraWidget extends SuperLoraBaseWidget {
     return truncated + "...";
   }
 
+  // ── Strength slider: drag-to-set track with a configurable range ───────────
+
+  /** Per-row overrides win; otherwise fall back to the node-wide default range. */
+  getStrengthRange(node: any): [number, number, number] {
+    const min = typeof this.value.strengthMin === 'number' ? this.value.strengthMin : (node?.properties?.strengthRangeMin ?? -2);
+    const max = typeof this.value.strengthMax === 'number' ? this.value.strengthMax : (node?.properties?.strengthRangeMax ?? 2);
+    const step = typeof this.value.strengthStep === 'number' && this.value.strengthStep > 0
+      ? this.value.strengthStep
+      : (node?.properties?.strengthRangeStep ?? 0.01);
+    return [min, max, step];
+  }
+
+  private roundToStep(v: number, step: number): number {
+    if (!step || step <= 0) return v;
+    const rounded = Math.round(v / step) * step;
+    // Kill float noise (e.g. 0.1 + 0.2 style drift) without hard-coding a decimal count.
+    return Math.round(rounded * 1e6) / 1e6;
+  }
+
+  private drawStrengthSlider(ctx: any, node: any, x: number, y: number, width: number, height: number, key: 'strength' | 'strengthClip', accent: string): void {
+    const [min, max] = this.getStrengthRange(node);
+    const span = (max - min) || 1;
+    const raw = key === 'strength' ? this.value.strength : (this.value.strengthClip ?? this.value.strength ?? 1);
+    const value = Number(raw) || 0;
+    const ratio = Math.min(1, Math.max(0, (value - min) / span));
+    const fillW = Math.max(0, Math.round(width * ratio));
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(x, y, width, height, height / 2);
+    ctx.clip();
+
+    // Track
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillRect(x, y, width, height);
+
+    // Fill
+    if (fillW > 0) {
+      ctx.fillStyle = this.value.enabled ? accent : "#555";
+      ctx.globalAlpha = this.value.enabled ? 0.85 : 0.5;
+      ctx.fillRect(x, y, fillW, height);
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.strokeStyle = "rgba(255,255,255,0.14)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
+
+    // Label + value, drawn twice with opposite clips so the text stays legible
+    // regardless of where the fill edge lands (mirrors the reference slider look).
+    const label = key === 'strength' ? 'Model' : 'CLIP';
+    const dec = 2;
+    let text = value.toFixed(dec);
+    if (/^-0(\.0+)?$/.test(text)) text = text.slice(1);
+    ctx.font = "10px 'Segoe UI', Arial, sans-serif";
+    ctx.textBaseline = "middle";
+    const midY = y + height / 2 + 0.5;
+    const padX = 7;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x + fillW, y, Math.max(0, width - fillW), height);
+    ctx.clip();
+    ctx.fillStyle = this.value.enabled ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.35)";
+    ctx.textAlign = "left";
+    ctx.fillText(label, x + padX, midY);
+    ctx.textAlign = "right";
+    ctx.fillText(text, x + width - padX, midY);
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, fillW, height);
+    ctx.clip();
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "left";
+    ctx.fillText(label, x + padX, midY);
+    ctx.textAlign = "right";
+    ctx.fillText(text, x + width - padX, midY);
+    ctx.restore();
+
+    ctx.restore();
+  }
+
+  hitDragHandle(pos: number[]): boolean {
+    return this.isInBounds(pos, this._dragHandleBounds);
+  }
+
+  getSliderKeyAt(pos: number[]): 'strength' | 'strengthClip' | null {
+    if (this.isInBounds(pos, this._strengthSliderBounds)) return 'strength';
+    if (this.isInBounds(pos, this._strengthClipSliderBounds)) return 'strengthClip';
+    return null;
+  }
+
+  /** Sets value from an X position within the row (same coordinate space as the drawn bounds). */
+  setStrengthFromX(node: any, key: 'strength' | 'strengthClip', x: number): void {
+    const bounds = key === 'strength' ? this._strengthSliderBounds : this._strengthClipSliderBounds;
+    if (!bounds || bounds[2] <= 0) return;
+    const [min, max, step] = this.getStrengthRange(node);
+    const ratio = Math.min(1, Math.max(0, (x - bounds[0]) / bounds[2]));
+    let v = min + ratio * (max - min);
+    v = this.roundToStep(v, step);
+    v = Math.min(max, Math.max(min, v));
+    (this.value as any)[key] = v;
+    node.setDirtyCanvas(true, false);
+    try { WidgetAPI.syncExecutionWidgets(node); } catch {}
+  }
+
   onEnabledDown = (_event: any, _pos: any, node: any): boolean => {
     this.value.enabled = !this.value.enabled;
     node.setDirtyCanvas(true, false);
@@ -446,68 +534,8 @@ export class SuperLoraWidget extends SuperLoraBaseWidget {
     return true;
   };
 
-  onStrengthClick = (event: any, _pos: any, node: any): boolean => {
-    try {
-      const app = (window as any)?.app;
-      const canvas = app?.canvas;
-      if (canvas?.prompt) {
-        canvas.prompt("Model Strength", this.value.strength ?? 1, (v: any) => {
-          const val = parseFloat(v);
-          if (!Number.isNaN(val)) {
-            this.value.strength = Math.max(-10, Math.min(10, val));
-            node.setDirtyCanvas(true, true);
-          }
-        }, event);
-        return true;
-      }
-    } catch {}
-    return false;
-  };
-
-  onStrengthDownClick = (_event: any, _pos: any, node: any): boolean => {
-    this.value.strength = Math.max(-10, this.value.strength - 0.1);
-    node.setDirtyCanvas(true, false);
-    try { WidgetAPI.syncExecutionWidgets(node); } catch {}
-    return true;
-  };
-
-  onStrengthUpClick = (_event: any, _pos: any, node: any): boolean => {
-    this.value.strength = Math.min(10, this.value.strength + 0.1);
-    node.setDirtyCanvas(true, false);
-    try { WidgetAPI.syncExecutionWidgets(node); } catch {}
-    return true;
-  };
-
-  onStrengthClipClick = (event: any, _pos: any, node: any): boolean => {
-    try {
-      const app = (window as any)?.app;
-      const canvas = app?.canvas;
-      if (canvas?.prompt) {
-        canvas.prompt("CLIP Strength", this.value.strengthClip ?? this.value.strength ?? 1, (v: any) => {
-          const val = parseFloat(v);
-          if (!Number.isNaN(val)) {
-            this.value.strengthClip = Math.max(-10, Math.min(10, val));
-            node.setDirtyCanvas(true, true);
-            try { WidgetAPI.syncExecutionWidgets(node); } catch {}
-          }
-        }, event);
-        return true;
-      }
-    } catch {}
-    return false;
-  };
-
-  onStrengthClipDownClick = (_event: any, _pos: any, node: any): boolean => {
-    this.value.strengthClip = Math.max(-10, (this.value.strengthClip ?? this.value.strength ?? 1) - 0.1);
-    node.setDirtyCanvas(true, false);
-    try { WidgetAPI.syncExecutionWidgets(node); } catch {}
-    return true;
-  };
-
-  onStrengthClipUpClick = (_event: any, _pos: any, node: any): boolean => {
-    this.value.strengthClip = Math.min(10, (this.value.strengthClip ?? this.value.strength ?? 1) + 0.1);
-    node.setDirtyCanvas(true, false);
-    try { WidgetAPI.syncExecutionWidgets(node); } catch {}
+  onStrengthSettingsClick = (event: any, _pos: any, node: any): boolean => {
+    WidgetAPI.showStrengthSettings(node, this, event);
     return true;
   };
 

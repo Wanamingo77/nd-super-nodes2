@@ -63,6 +63,7 @@ export class SuperLoraNode {
         showLoadTemplateDialog: (node: any, e?: any) => SuperLoraNode.showLoadTemplateDialog(node, e),
         showNameOverlay: (opts: any) => SuperLoraNode.showNameOverlay(opts),
         showInlineText: (e: any, initial: string, onCommit: (v: string) => void, place?: any) => SuperLoraNode.showInlineText(e, initial, onCommit, place),
+        showStrengthSettings: (node: any, widget: any, e?: any) => SuperLoraNode.showStrengthSettings(node, widget, e),
         showToast: (m: string, t?: any) => SuperLoraNode.showToast(m, t),
         calculateNodeSize: (node: any) => SuperLoraNode.calculateNodeSize(node),
         organizeByTags: (node: any) => SuperLoraNode.organizeByTags(node),
@@ -148,14 +149,28 @@ export class SuperLoraNode {
 
     const originalOnMouseDown = nodeType.prototype.onMouseDown;
     nodeType.prototype.onMouseDown = function(event: any, pos: any) {
+      if (SuperLoraNode.tryStartDrag(this, event, pos)) {
+        return true;
+      }
       if (SuperLoraNode.handleMouseDown(this, event, pos)) {
         return true;
       }
       return originalOnMouseDown ? originalOnMouseDown.call(this, event, pos) : false;
     };
 
+    const originalOnMouseMove = nodeType.prototype.onMouseMove;
+    nodeType.prototype.onMouseMove = function(event: any, pos: any) {
+      if (SuperLoraNode.handleDragMove(this, event, pos)) {
+        return true;
+      }
+      return originalOnMouseMove ? originalOnMouseMove.call(this, event, pos) : false;
+    };
+
     const originalOnMouseUp = nodeType.prototype.onMouseUp;
     nodeType.prototype.onMouseUp = function(event: any, pos: any) {
+      if (SuperLoraNode.endDrag(this, event, pos)) {
+        return true;
+      }
       if (SuperLoraNode.handleMouseUp(this, event, pos)) {
         return true;
       }
@@ -485,7 +500,18 @@ export class SuperLoraNode {
           if (!LiteGraph?.vueNodesMode) return false;
           if (SuperLoraNode.isNodeBypassed(n)) return true;
           const type = event?.type;
+          // pointerdown/pointermove arrive local to THIS widget's own isolated mini-canvas
+          // (startY=0); pointerup arrives relative to the whole node (the default
+          // NODE_WIDGET_TOP_OFFSET) - see the coordinate-space note on tryStartDrag's
+          // call sites in setup() for the classic-mode equivalent of this split.
+          if (type === 'pointerdown' || type === 'mousedown') {
+            return SuperLoraNode.tryStartDrag(n, event, pos, 0);
+          }
+          if (type === 'pointermove' || type === 'mousemove') {
+            return SuperLoraNode.handleDragMove(n, event, pos, 0);
+          }
           if (type === 'pointerup' || type === 'mouseup' || type === 'click') {
+            if (SuperLoraNode.endDrag(n, event, pos)) return true;
             return SuperLoraNode.handleMouseEvent(n, event, pos, 'onClick');
           }
           return false;
@@ -531,6 +557,88 @@ export class SuperLoraNode {
 
   static handleMouseUp(node: any, event: any, pos: any): boolean {
     return this.handleMouseEvent(node, event, pos, 'onClick');
+  }
+
+  /**
+   * Finds which custom widget a point falls in and translates the point into that
+   * widget's local coordinates. Shared by the click dispatcher and the drag helpers
+   * below so both walk the widget stack the exact same way.
+   */
+  private static findWidgetAndLocalPos(node: any, pos: any, startY: number): { widget: any; localPos: number[] } | null {
+    if (!node.customWidgets) return null;
+    const marginDefault = SuperLoraNode.MARGIN_SMALL;
+    let currentY = startY;
+    for (const widget of node.customWidgets) {
+      const size = widget.computeSize();
+      const isCollapsed = widget instanceof SuperLoraWidget && widget.isCollapsedByTag(node);
+      if (size[1] === 0 || isCollapsed) continue;
+      const height = widget instanceof SuperLoraWidget ? 34 : size[1];
+      const widgetStartY = currentY;
+      const widgetEndY = currentY + height;
+      if (pos[1] >= widgetStartY && pos[1] <= widgetEndY) {
+        return { widget, localPos: [pos[0], pos[1] - widgetStartY] };
+      }
+      const marginAfter = (widget instanceof SuperLoraTagWidget && widget.isCollapsed()) ? 0 : marginDefault;
+      currentY += height + marginAfter;
+    }
+    return null;
+  }
+
+  /**
+   * Starts a drag if the press landed on a LoRA row's drag handle (reorder) or its
+   * strength slider track (drag-to-set). Kept separate from handleMouseEvent's
+   * onDown/onClick dispatch on purpose - see the bridge widget's mouse() for why
+   * (dispatching a generic onMouseDown there double-fires click-only actions).
+   */
+  static tryStartDrag(node: any, event: any, pos: any, startY: number = SuperLoraNode.NODE_WIDGET_TOP_OFFSET): boolean {
+    if (SuperLoraNode.isNodeBypassed(node)) return false;
+    const found = SuperLoraNode.findWidgetAndLocalPos(node, pos, startY);
+    if (!found || !(found.widget instanceof SuperLoraWidget)) return false;
+    const widget = found.widget as SuperLoraWidget;
+
+    if (widget.hitDragHandle(found.localPos)) {
+      node.__ndDrag = { kind: 'reorder', widget, startY: pos[1], steps: 0 };
+      return true;
+    }
+    const sliderKey = widget.getSliderKeyAt(found.localPos);
+    if (sliderKey) {
+      widget.setStrengthFromX(node, sliderKey, found.localPos[0]);
+      node.__ndDrag = { kind: 'strength', widget, sliderKey };
+      return true;
+    }
+    return false;
+  }
+
+  /** Continues an active drag started by tryStartDrag(). No-op if nothing is dragging. */
+  static handleDragMove(node: any, event: any, pos: any, startY: number = SuperLoraNode.NODE_WIDGET_TOP_OFFSET): boolean {
+    const drag = node.__ndDrag;
+    if (!drag) return false;
+
+    if (drag.kind === 'strength') {
+      // X does not depend on startY (widgets span the full node width from x=0 in
+      // every rendering mode), so re-resolving the row here just keeps this in sync
+      // if the stack reflowed mid-drag; only pos[0] is actually used.
+      const found = SuperLoraNode.findWidgetAndLocalPos(node, pos, startY);
+      const localX = found ? found.localPos[0] : pos[0];
+      drag.widget.setStrengthFromX(node, drag.sliderKey, localX);
+      return true;
+    }
+
+    if (drag.kind === 'reorder') {
+      const rowHeight = 36; // ~row height + margin; only the sign/magnitude of steps matters
+      const targetSteps = Math.round((pos[1] - drag.startY) / rowHeight);
+      while (drag.steps < targetSteps) { drag.widget.onMoveDownClick(event, [0, 0], node); drag.steps++; }
+      while (drag.steps > targetSteps) { drag.widget.onMoveUpClick(event, [0, 0], node); drag.steps--; }
+      return true;
+    }
+    return false;
+  }
+
+  /** Ends an active drag, consuming the mouseup so it doesn't also fire a normal click. */
+  static endDrag(node: any, _event: any, _pos: any): boolean {
+    if (!node.__ndDrag) return false;
+    node.__ndDrag = null;
+    return true;
   }
 
   private static handleMouseEvent(node: any, event: any, pos: any, handler: string, startY: number = SuperLoraNode.NODE_WIDGET_TOP_OFFSET): boolean {
@@ -1417,5 +1525,153 @@ export class SuperLoraNode {
     form.appendChild(input); form.appendChild(submit);
     panel.appendChild(header); panel.appendChild(form); overlay.appendChild(panel); document.body.appendChild(overlay);
     setTimeout(() => input.focus(), 0);
+  }
+
+  /**
+   * Small settings popup for a LoRA row's strength slider(s): lets the user type an
+   * exact value (same as the old click-to-type behaviour) and configure the
+   * min/max/step range the slider drags across, either just for this row or as the
+   * new default for every row on the node.
+   */
+  public static showStrengthSettings(node: any, widget: any, _event?: any): void {
+    const [min, max, step] = widget.getStrengthRange(node);
+    const showClip = !!node?.properties?.showSeparateStrengths;
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 2147483600; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(2px);`;
+    const panel = document.createElement('div');
+    panel.style.cssText = `width: 320px; background: #222; border: 1px solid #444; border-radius: 8px; color: #fff; font-family: 'Segoe UI', Arial, sans-serif; box-shadow: 0 12px 30px rgba(0,0,0,0.4); overflow: hidden;`;
+    const header = document.createElement('div');
+    header.textContent = 'Strength settings';
+    header.style.cssText = `padding: 12px 14px; font-weight: 600; border-bottom: 1px solid #444; background: #2a2a2a;`;
+
+    const body = document.createElement('div');
+    body.style.cssText = `display: flex; flex-direction: column; gap: 10px; padding: 14px;`;
+
+    const fieldStyle = `flex: 1; min-width: 0; padding: 8px 10px; border-radius: 6px; border: 1px solid #555; background: #1a1a1a; color: #fff; outline: none; font-size: 12px;`;
+    const labelStyle = `font-size: 11px; color: #aaa; margin-bottom: 4px; display: block;`;
+
+    const makeField = (labelText: string, value: number, stepAttr: string): HTMLInputElement => {
+      const wrap = document.createElement('label');
+      wrap.style.cssText = `flex: 1; min-width: 0;`;
+      const lab = document.createElement('span'); lab.textContent = labelText; lab.style.cssText = labelStyle;
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.step = stepAttr; inp.value = String(value);
+      inp.style.cssText = fieldStyle;
+      wrap.appendChild(lab); wrap.appendChild(inp);
+      body.appendChild(wrap);
+      return inp;
+    };
+
+    const valueRow = document.createElement('div'); valueRow.style.cssText = `display: flex; gap: 8px;`;
+    body.appendChild(valueRow);
+    const modelLabel = document.createElement('label'); modelLabel.style.cssText = 'flex:1; min-width:0;';
+    modelLabel.innerHTML = `<span style="${labelStyle}">Model strength</span>`;
+    const modelInput = document.createElement('input');
+    modelInput.type = 'number'; modelInput.step = String(step); modelInput.value = String(widget.value.strength ?? 1);
+    modelInput.style.cssText = fieldStyle;
+    modelLabel.appendChild(modelInput);
+    valueRow.appendChild(modelLabel);
+
+    let clipInput: HTMLInputElement | null = null;
+    if (showClip) {
+      const clipLabel = document.createElement('label'); clipLabel.style.cssText = 'flex:1; min-width:0;';
+      clipLabel.innerHTML = `<span style="${labelStyle}">CLIP strength</span>`;
+      clipInput = document.createElement('input');
+      clipInput.type = 'number'; clipInput.step = String(step);
+      clipInput.value = String(widget.value.strengthClip ?? widget.value.strength ?? 1);
+      clipInput.style.cssText = fieldStyle;
+      clipLabel.appendChild(clipInput);
+      valueRow.appendChild(clipLabel);
+    }
+
+    const rangeRow = document.createElement('div'); rangeRow.style.cssText = `display: flex; gap: 8px;`;
+    body.appendChild(rangeRow);
+    const minInput = document.createElement('input'); minInput.type = 'number'; minInput.step = '0.01'; minInput.value = String(min); minInput.style.cssText = fieldStyle;
+    const maxInput = document.createElement('input'); maxInput.type = 'number'; maxInput.step = '0.01'; maxInput.value = String(max); maxInput.style.cssText = fieldStyle;
+    const stepInput = document.createElement('input'); stepInput.type = 'number'; stepInput.step = '0.001'; stepInput.min = '0.001'; stepInput.value = String(step); stepInput.style.cssText = fieldStyle;
+    [
+      ['Min', minInput], ['Max', maxInput], ['Step', stepInput]
+    ].forEach(([labelText, inp]) => {
+      const wrap = document.createElement('label'); wrap.style.cssText = 'flex:1; min-width:0;';
+      const lab = document.createElement('span'); lab.textContent = labelText as string; lab.style.cssText = labelStyle;
+      wrap.appendChild(lab); wrap.appendChild(inp as HTMLInputElement);
+      rangeRow.appendChild(wrap);
+    });
+
+    const applyAllRow = document.createElement('label');
+    applyAllRow.style.cssText = `display: flex; align-items: center; gap: 6px; font-size: 12px; color: #ccc; cursor: pointer;`;
+    const applyAllCheckbox = document.createElement('input'); applyAllCheckbox.type = 'checkbox';
+    applyAllRow.appendChild(applyAllCheckbox);
+    applyAllRow.appendChild(document.createTextNode('Use this range as the default for all LoRA rows'));
+    body.appendChild(applyAllRow);
+
+    const actions = document.createElement('div');
+    actions.style.cssText = `display: flex; justify-content: flex-end; gap: 8px; padding: 12px 14px; border-top: 1px solid #444; background: #262626;`;
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button'; cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText = `padding: 8px 14px; background: #333; color: #ddd; border: 1px solid #555; border-radius: 6px; cursor: pointer;`;
+    const doneBtn = document.createElement('button');
+    doneBtn.type = 'button'; doneBtn.textContent = 'Done';
+    doneBtn.style.cssText = `padding: 8px 14px; background: #1976d2; color: #fff; border: 1px solid #0d47a1; border-radius: 6px; cursor: pointer;`;
+    actions.appendChild(cancelBtn); actions.appendChild(doneBtn);
+
+    const close = () => overlay.remove();
+    cancelBtn.addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', function onKey(e) {
+      if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey as any); }
+    });
+
+    doneBtn.addEventListener('click', () => {
+      const newMin = parseFloat(minInput.value);
+      const newMax = parseFloat(maxInput.value);
+      const newStep = parseFloat(stepInput.value);
+      const hasRange = Number.isFinite(newMin) && Number.isFinite(newMax) && newMax > newMin;
+      const finalStep = Number.isFinite(newStep) && newStep > 0 ? newStep : 0.01;
+
+      if (hasRange) {
+        if (applyAllCheckbox.checked) {
+          node.properties.strengthRangeMin = newMin;
+          node.properties.strengthRangeMax = newMax;
+          node.properties.strengthRangeStep = finalStep;
+          for (const w of node.customWidgets || []) {
+            if (w instanceof SuperLoraWidget) {
+              delete w.value.strengthMin;
+              delete w.value.strengthMax;
+              delete w.value.strengthStep;
+            }
+          }
+        } else {
+          widget.value.strengthMin = newMin;
+          widget.value.strengthMax = newMax;
+          widget.value.strengthStep = finalStep;
+        }
+      }
+
+      const newModel = parseFloat(modelInput.value);
+      if (Number.isFinite(newModel)) {
+        const [effMin, effMax] = widget.getStrengthRange(node);
+        widget.value.strength = Math.min(effMax, Math.max(effMin, newModel));
+      }
+      if (clipInput) {
+        const newClip = parseFloat(clipInput.value);
+        if (Number.isFinite(newClip)) {
+          const [effMin, effMax] = widget.getStrengthRange(node);
+          widget.value.strengthClip = Math.min(effMax, Math.max(effMin, newClip));
+        }
+      }
+
+      node.setDirtyCanvas(true, true);
+      try { SuperLoraNode.syncExecutionWidgets(node); } catch {}
+      close();
+    });
+
+    panel.appendChild(header);
+    panel.appendChild(body);
+    panel.appendChild(actions);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    setTimeout(() => modelInput.focus(), 0);
   }
 }
